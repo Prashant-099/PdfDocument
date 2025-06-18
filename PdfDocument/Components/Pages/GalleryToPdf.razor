@@ -1,0 +1,153 @@
+﻿@page "/gallerytopdf"
+@using Microsoft.Maui.Storage
+@using PdfSharpCore.Pdf
+@using PdfSharpCore.Drawing
+@inject IJSRuntime JS
+
+<h3>🖼️ Gallery to PDF</h3>
+
+@if (imagePaths.Count == 0)
+{
+    <button class="btn btn-primary mb-3" @onclick="PickImages">📂 Select Images</button>
+}
+else
+{
+    <div class="mb-3">
+        <button class="btn btn-secondary me-2" @onclick="PickImages">➕ Add More</button>
+        <button class="btn btn-success" @onclick="GeneratePdf">📄 Generate PDF</button>
+    </div>
+}
+
+<div class="row">
+    @for (int i = 0; i < imagePaths.Count; i++)
+    {
+        <div class="col-6 col-md-3 mb-3">
+            <div class="card">
+                <img src="@GetBase64Image(imagePaths[i])" class="card-img-top" style="height: 150px; object-fit: cover;" />
+                <div class="card-body text-center p-2">
+                    <button class="btn btn-sm btn-outline-secondary me-1" @onclick="@(() => MoveUp(i))" disabled="@(i == 0)">⬆️</button>
+                    <button class="btn btn-sm btn-outline-secondary me-1" @onclick="@(() => MoveDown(i))" disabled="@(i == imagePaths.Count - 1)">⬇️</button>
+                    <button class="btn btn-sm btn-outline-danger" @onclick="@(() => RemoveImage(i))">❌</button>
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private List<string> imagePaths = new();
+    protected override async Task OnInitializedAsync()
+    {
+        PickImages();
+
+    }
+    private string GetBase64Image(string path)
+    {
+        if (!File.Exists(path))
+            return "";
+
+        byte[] imageBytes = File.ReadAllBytes(path);
+        string base64 = Convert.ToBase64String(imageBytes);
+        string mimeType = Path.GetExtension(path).ToLower() switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".png" => "image/png",
+            _ => "image/*"
+        };
+        return $"data:{mimeType};base64,{base64}";
+    }
+
+    private async Task PickImages()
+    {
+        try
+        {
+            var files = await FilePicker.Default.PickMultipleAsync(new PickOptions
+                {
+                    PickerTitle = "Select images",
+                    FileTypes = FilePickerFileType.Images
+                });
+
+            if (files != null)
+            {
+                foreach (var file in files)
+                {
+                    string localPath = Path.Combine(FileSystem.AppDataDirectory, file.FileName);
+
+                    using var stream = await file.OpenReadAsync();
+                    using var newFile = File.Create(localPath);
+                    await stream.CopyToAsync(newFile);
+
+                    imagePaths.Add(localPath);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", $"Error picking images: {ex.Message}");
+        }
+    }
+
+    private void RemoveImage(int index) => imagePaths.RemoveAt(index);
+
+    private void MoveUp(int index)
+    {
+        if (index > 0)
+        {
+            (imagePaths[index - 1], imagePaths[index]) = (imagePaths[index], imagePaths[index - 1]);
+        }
+    }
+
+    private void MoveDown(int index)
+    {
+        if (index < imagePaths.Count - 1)
+        {
+            (imagePaths[index + 1], imagePaths[index]) = (imagePaths[index], imagePaths[index + 1]);
+        }
+    }
+
+    private async Task GeneratePdf()
+    {
+        if (imagePaths.Count == 0)
+        {
+            await JS.InvokeVoidAsync("alert", "Please select at least one image.");
+            return;
+        }
+
+        try
+        {
+            using var pdf = new PdfDocument();
+
+            foreach (var path in imagePaths)
+            {
+                var page = pdf.AddPage();
+
+                using var imgStream = File.OpenRead(path);
+                using var image = XImage.FromStream(() => imgStream);
+
+                page.Width = image.PixelWidth;
+                page.Height = image.PixelHeight;
+
+                using var gfx = XGraphics.FromPdfPage(page);
+                gfx.DrawImage(image, 0, 0, image.PixelWidth, image.PixelHeight);
+            }
+
+            string pdfPath = Path.Combine(FileSystem.AppDataDirectory, $"Gallery_{DateTime.Now:yyyyMMdd_HHmmss}.pdf");
+            using var fs = new FileStream(pdfPath, FileMode.Create);
+            pdf.Save(fs);
+
+            await JS.InvokeVoidAsync("alert", $"PDF saved to: {pdfPath}");
+
+            await Share.RequestAsync(new ShareFileRequest
+                {
+                    Title = "Share PDF",
+                    File = new ShareFile(pdfPath)
+                });
+
+            imagePaths.Clear();
+        }
+        catch (Exception ex)
+        {
+            await JS.InvokeVoidAsync("alert", $"PDF generation error: {ex.Message}");
+        }
+    }
+}

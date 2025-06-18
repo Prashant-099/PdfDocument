@@ -1,0 +1,9 @@
+{
+  "profiles": {
+    "Windows Machine": {
+      "commandName": "Project",
+      "workingDirectory": "D:\\PdfDocument\\PdfDocument",
+      "nativeDebugging": false
+    }
+  }
+}
